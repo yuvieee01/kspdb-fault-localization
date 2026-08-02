@@ -62,6 +62,10 @@ they are the ground truth, taken directly from the assignment brief.
   `AI-WORKFLOW.md` — graded deliverables, required at repo root, filled in
   incrementally as each part is built, not batched at the end.
 
+- `SCOPE.md` — out-of-scope list, acceptance gates (G1-G6), evaluation
+  weights, code quality expectations. Read this alongside this file, not
+  just docs/DATA_CONTRACTS.md and docs/ALGORITHM_SPEC.md.
+
 ## Things the agent should flag to the human, not decide alone
 - Anything affecting `DECISIONS.md` content (the human should write/edit
   these in their own words — they get asked to defend them on a follow-up
