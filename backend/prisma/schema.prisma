@@ -1,5 +1,5 @@
-// This is your Prisma schema file.
-// Models will be added in step 2 (Prisma schema + migrations + seed).
+// KSPDB Fault Localization — Prisma Schema
+// Field names match docs/DATA_CONTRACTS.md exactly.
 
 generator client {
   provider = "prisma-client-js"
@@ -8,4 +8,211 @@ generator client {
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+// ── Network topology ────────────────────────────────────────────────
+
+model Substation {
+  substation_id String   @id
+  name          String
+  lat           Float
+  lon           Float
+  feeders       Feeder[]
+
+  @@map("substations")
+}
+
+model Feeder {
+  feeder_id     String       @id
+  substation_id String
+  substation    Substation   @relation(fields: [substation_id], references: [substation_id])
+  transformers  Transformer[]
+  poles         Pole[]
+
+  @@map("feeders")
+}
+
+model Transformer {
+  dt_id             String  @id
+  feeder_id         String
+  feeder            Feeder  @relation(fields: [feeder_id], references: [feeder_id])
+  lat               Float
+  lon               Float
+  capacity_kva      Int
+  households_served Int
+  poles             Pole[]
+
+  @@map("transformers")
+}
+
+model Pole {
+  pole_id        String       @id
+  lat            Float
+  lon            Float
+  feeder_id      String
+  feeder         Feeder       @relation(fields: [feeder_id], references: [feeder_id])
+  dt_id          String
+  transformer    Transformer  @relation(fields: [dt_id], references: [dt_id])
+  seq_on_line    Int?         // null for ~60% of DTs' poles
+  parent_pole_id String?      // null wherever seq_on_line is null
+  parent_pole    Pole?        @relation("PoleTree", fields: [parent_pole_id], references: [pole_id])
+  child_poles    Pole[]       @relation("PoleTree")
+  pole_type      String
+  ward           String
+  pincode        String?      // null for ~3% of poles
+  device_id      String?      // null for ~9% of poles (no device fitted)
+
+  // Derived state
+  pole_state       PoleState?
+  telemetry_events TelemetryEvent[]
+  incident_poles   IncidentPole[]
+
+  @@index([dt_id])
+  @@index([feeder_id])
+  @@index([device_id])
+  @@map("poles")
+}
+
+// ── Topology edges (recorded + inferred, per ALGORITHM_SPEC step 3) ─
+
+enum EdgeSource {
+  recorded
+  inferred
+}
+
+model TopologyEdge {
+  id             Int        @id @default(autoincrement())
+  dt_id          String
+  parent_pole_id String
+  child_pole_id  String
+  source         EdgeSource
+  confidence     Float      @default(1.0)
+  distance_m     Float?     // Haversine distance, useful for debugging
+
+  @@unique([dt_id, child_pole_id])
+  @@index([dt_id])
+  @@map("topology_edges")
+}
+
+// ── Telemetry ───────────────────────────────────────────────────────
+
+enum TelemetryEventType {
+  heartbeat
+  power_lost
+  power_restored
+  boot
+}
+
+model TelemetryEvent {
+  id          Int                @id @default(autoincrement())
+  device_id   String
+  pole_id     String
+  pole        Pole               @relation(fields: [pole_id], references: [pole_id])
+  event       TelemetryEventType
+  energized   Boolean
+  ts          DateTime           // device clock (up to +/-90s skew)
+  seq         Int                // monotonic per device, resets on boot
+  battery_mv  Int
+  rssi        Int
+  fw          String
+  received_at DateTime           @default(now()) // server receive time
+
+  @@index([device_id, seq])
+  @@index([pole_id])
+  @@index([received_at])
+  @@map("telemetry_events")
+}
+
+// ── Live pole state (algorithm step 1-2) ────────────────────────────
+
+enum PoleStatus {
+  live
+  dark
+  offline_ambiguous
+  unknown
+}
+
+model PoleState {
+  pole_id       String     @id
+  pole          Pole       @relation(fields: [pole_id], references: [pole_id])
+  status        PoleStatus @default(unknown)
+  energized     Boolean    @default(true)
+  last_event    TelemetryEventType?
+  last_seq      Int        @default(0)
+  last_seen_at  DateTime?
+  updated_at    DateTime   @default(now()) @updatedAt
+
+  @@map("pole_states")
+}
+
+// ── Incidents / tickets ─────────────────────────────────────────────
+
+enum IncidentType {
+  span
+  dt
+  feeder
+}
+
+enum IncidentStatus {
+  active
+  verified     // auto-verified from telemetry
+  resolved     // manually resolved (only if telemetry confirms)
+  suppressed   // scheduled outage match
+}
+
+model Incident {
+  id                 Int            @id @default(autoincrement())
+  type               IncidentType
+  status             IncidentStatus @default(active)
+  feeder_id          String
+  dt_id              String?        // null for feeder-level faults
+  boundary_pole_id   String?        // the last live pole (span faults)
+  first_dark_pole_id String?        // the first dark pole beyond boundary
+  confidence         Float
+  confidence_reason  String
+  pin_code           String         // 6-digit PIN for field crew
+  affected_pole_count Int           @default(0)
+  ai_briefing        String?        // cached LLM-generated briefing
+  suppression_outage_id String?     // links to ScheduledOutage.id if suppressed
+  created_at         DateTime       @default(now())
+  updated_at         DateTime       @default(now()) @updatedAt
+  verified_at        DateTime?
+  incident_poles     IncidentPole[]
+
+  @@index([status])
+  @@index([feeder_id])
+  @@index([dt_id])
+  @@index([created_at])
+  @@map("incidents")
+}
+
+model IncidentPole {
+  id          Int      @id @default(autoincrement())
+  incident_id Int
+  incident    Incident @relation(fields: [incident_id], references: [id])
+  pole_id     String
+  pole        Pole     @relation(fields: [pole_id], references: [pole_id])
+
+  @@unique([incident_id, pole_id])
+  @@map("incident_poles")
+}
+
+// ── Scheduled outages ───────────────────────────────────────────────
+
+enum OutageScope {
+  feeder
+  dt
+}
+
+model ScheduledOutage {
+  id        String      @id  // e.g. "SO-2026-07-29-014"
+  scope     OutageScope
+  target_id String           // feeder_id or dt_id
+  start     DateTime
+  end       DateTime
+  reason    String
+
+  @@index([target_id])
+  @@index([start, end])
+  @@map("scheduled_outages")
 }

@@ -15,4 +15,5 @@ COPY . .
 
 EXPOSE 4000
 
-CMD ["npm", "run", "dev"]
+# On startup: migrate → seed → dev server (see package.json start:docker)
+CMD ["npm", "run", "start:docker"]
