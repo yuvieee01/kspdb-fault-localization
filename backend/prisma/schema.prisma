@@ -133,14 +133,15 @@ enum PoleStatus {
 }
 
 model PoleState {
-  pole_id       String     @id
-  pole          Pole       @relation(fields: [pole_id], references: [pole_id])
-  status        PoleStatus @default(unknown)
-  energized     Boolean    @default(true)
-  last_event    TelemetryEventType?
-  last_seq      Int        @default(0)
-  last_seen_at  DateTime?
-  updated_at    DateTime   @default(now()) @updatedAt
+  pole_id        String     @id
+  pole           Pole       @relation(fields: [pole_id], references: [pole_id])
+  status         PoleStatus @default(unknown)
+  energized      Boolean    @default(true)
+  last_event     TelemetryEventType?
+  last_seq       Int        @default(0)
+  last_device_id String?    // tracks which device's seq stream we're comparing against
+  last_seen_at   DateTime?
+  updated_at     DateTime   @default(now()) @updatedAt
 
   @@map("pole_states")
 }

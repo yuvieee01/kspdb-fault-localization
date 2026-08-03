@@ -41,6 +41,26 @@ tracked `last_seq` back to 0 whenever it sees a `boot` event for that
 device, so post-reboot sequences are handled correctly instead of being
 mistaken for stale duplicates.
 
+## Handling telemetry from an unrecognized pole_id
+Chosen: reject the event outright (don't store it, don't create an orphan
+record) if the pole_id doesn't match anything in the pole registry.
+Reasoning: the pole registry is the authoritative, closed set of assets
+the department has told us about. A pole_id we don't recognize is either
+a data-entry mistake on the device side or a device reporting from
+outside our subdivision — either way, it's not something the localization
+algorithm should ever try to reason about, so it's safer to reject at the
+door than to let bad data quietly sit in the event log.
+
+## Dedup across device swaps
+Verified: when a pole's device is physically replaced (new device_id,
+its own seq starting near 0), the old device's last_seq no longer
+applies. The ingest handler tracks last_device_id alongside last_seq in
+PoleState — if an incoming event's device_id differs from the tracked
+one, it's treated as a new device with a fresh sequence, not compared
+against the old device's counter. Tested by sending seq=50 from device A,
+then seq=3 from device B on the same pole — the second event was
+correctly accepted rather than rejected as "stale."
+
 ## Missing topology (the 60% case)
 <!-- Fill in once implemented: MST-based geometric inference, confidence
 scoring, what the UI shows differently for inferred vs recorded topology. -->
