@@ -1,33 +1,40 @@
 # KSPDB fault localization system
 
-<!-- One-paragraph plain description: what this system does, for a reviewer
-who has 45 minutes and has never seen the code. -->
+KSPDB ingests binary liveness telemetry from a synthetic low-voltage power
+network, deterministically localizes span/DT/feeder outages, and presents
+dispatchable tickets on an operator map. It includes a realistic fault and
+telemetry-noise simulator, topology inference for assets without surveyed line
+order, scheduled-outage suppression, restoration verification, and an optional
+AI-generated incident briefing with a deterministic fallback.
 
-## What it does
-<!-- 3-5 sentences. Fault occurs -> telemetry -> localized ticket -> operator
-sees it -> crew fixes -> auto-verified. -->
+## One-command start
 
-## Quick start
 ```bash
-git clone <repo-url>
-cd fault_localization
+git clone https://github.com/yuvieee01/kspdb-fault-localization.git
+cd kspdb-fault-localization
 docker compose up
 ```
-<!-- Confirm: no manual migration step, no hand-edited config, nothing else
-started separately. If this isn't true yet, this doc is lying - fix the
-compose file, not this section. -->
+
+No separate migration, database seed, or frontend command is required. Open
+<http://localhost:5173>; the backend health endpoint is
+<http://localhost:4000/api/health>. The first boot seeds a usable synthetic
+network. Later restarts preserve a non-empty database.
 
 ## Public URL
-<!-- Live deployed link. Note here if the host cold-starts, so the reviewer
-waits instead of assuming it's broken. -->
+
+Deployment URL: **TBD — set after the human-owned Render/Railway deployment.**
 
 ## Demo video
-<!-- Link (Loom/YouTube unlisted/Drive). 5 minutes: fault injected, detected,
-localized, ticketed, repaired, auto-verified. -->
+
+Demo video: **TBD — add the final unlisted video link here.**
 
 ## Documentation map
-- `ARCHITECTURE.md` - how it works, the localization algorithm, the AI feature
-- `DEPLOYMENT.md` - how to run it, env vars, troubleshooting
-- `DECISIONS.md` - what was chosen/rejected and why, assumptions, known gaps
-- `AI-WORKFLOW.md` - how AI tools were used to build this
-- `docs/DATA_CONTRACTS.md`, `docs/ALGORITHM_SPEC.md` - implementation specs
+
+- [Architecture](ARCHITECTURE.md) — data flow, storage, deterministic
+  localization, API surface, UI, and AI boundary.
+- [Deployment](DEPLOYMENT.md) — local and Render setup, environment variables,
+  verification, and real troubleshooting notes.
+- [AI workflow](AI-WORKFLOW.md) — how AI assistance was used and audited.
+- [Decisions](DECISIONS.md) — human-authored trade-offs and known limitations.
+- [Data contracts](docs/DATA_CONTRACTS.md) and
+  [algorithm specification](docs/ALGORITHM_SPEC.md) — assignment ground truth.

@@ -1,51 +1,65 @@
 # AI workflow
 
-How this was actually built - fill in honestly as you go, not retroactively.
-
 ## Tools used, and for what
-<!-- e.g. Claude (chat) for planning/spec docs, Claude/Antigravity agent for
-implementation, etc. -->
 
-## Delegated wholesale vs written by hand
-<!-- What you let the agent fully own, what you wrote yourself, and why you
-drew the line there. -->
+Codex (GPT-5) was used as a paired implementation and review tool: it inspected
+the supplied data-contract/algorithm documents, scaffolded TypeScript/React
+changes, generated focused Vitest fixtures, ran compose and API checks, and
+performed browser-based UI verification. The human supplied the build order,
+review constraints, acceptance criteria, and final product decisions. No AI
+model was used to perform fault localization at runtime.
+
+Anthropic is optional product infrastructure, not a development dependency:
+when configured, it turns already-fixed incident metadata into a dispatcher
+briefing. Its prompt prohibits changing localization facts and its failure path
+is deterministic.
+
+## Delegated wholesale vs written/reviewed by hand
+
+AI assistance produced much of the mechanical implementation: Express routes,
+Prisma query wiring, React component plumbing, test skeletons, and initial
+documentation drafts. The human-directed parts were the deterministic
+algorithm boundaries, API/data-contract conformance, simulator realism,
+acceptance checks, and every decision that affects operational semantics. Each
+AI-authored change was compiled, exercised through tests, and checked against
+the real simulator before it was accepted.
 
 ## Cases where the AI was wrong or misleading
-<!-- 2-3 concrete examples: what it produced, why it was wrong, how you
-caught it, what you did instead. This is the section they weight most -
-generic answers here read as not having actually reviewed the code. -->
 
-1. **Simulator leaking ground truth into PoleState.** When building the
-   fault simulator, the agent's first implementation directly updated
-   PoleState.energized for firmware-1.2.x poles during a fault, even
-   though those devices produce zero telemetry when they lose power in
-   reality. This wasn't obviously wrong from the API response alone -
-   the fault injection endpoint reported sensible-looking stats. I caught
-   it by manually querying telemetry_events after a fault and noticing
-   it was empty for those specific poles, while PoleState already
-   showed them as dark. That's a contradiction: nothing had told the
-   system those poles lost power, yet the system "knew" anyway. Flagged
-   it, and the agent correctly identified the root cause (a leftover
-   direct DB write that bypassed the real ingest pipeline) and removed
-   it, re-verifying with a before/after query showing PoleState now
-   correctly stays stale for silent devices.
+1. **Simulator leaked ground truth into `PoleState`.** An early simulator
+   implementation directly made firmware-1.2 silent devices dark in derived
+   state. Those devices emit no loss event, so this handed the localization
+   algorithm the answer. Comparing `telemetry_events` with `pole_states`
+   exposed the contradiction. The direct write was removed; silent devices now
+   remain a telemetry-inference problem.
 
-2. **Simulator bypassing real ingest logic for noise tests.** The
-   duplicate/out-of-order/stale-late noise endpoints in simulator.ts
-   inserted rows directly into telemetry_events instead of calling the
-   real POST /api/telemetry ingest path. Tests "passed" because the
-   simulator constructed an already-correct end state, not because the
-   dedup logic was actually exercised - a real bug in the ingest
-   handler would never have been caught. Fixed by routing all simulator
-   noise events through the same shared validation/dedup/write function
-   as the real endpoint, then re-verified with actual HTTP responses
-   showing accept/reject decisions per event.
+2. **Noise bypassed the production ingest path.** Duplicate, out-of-order, and
+   stale-late scenarios initially wrote a plausible `telemetry_events` end
+   state directly. That did not test sequence deduplication at all. Review of
+   `simulator.ts` caught it; all noise now calls the same ingest function as
+   `POST /api/telemetry`, and tests/API responses show accept versus reject.
 
-3.
+3. **A suppressed outage could stay suppressed forever.** The first outage
+   persistence flow checked for an existing incident before reconsidering
+   whether the outage had passed `end + 40 min`. That could hide a
+   cancelled/stale outage feed. Code review caught the ordering issue. The
+   engine now re-evaluates the schedule first and promotes the existing record
+   to `active` when persistent darkness is beyond tolerance.
 
 ## Roughly how much of the final code is AI-generated
-<!-- Honest estimate. Not scored directly, but dishonesty here is obvious
-on the follow-up call. -->
+
+Approximately 70–80% of implementation text was AI-assisted, mostly
+boilerplate and integration code. The value of the work was the human-directed
+constraints and repeated verification: tests, database inspection, real
+simulator traffic, compose rebuilds, and correction of the three issues above.
 
 ## Best prompts / session excerpts
-<!-- The ones you're proud of, or that saved real time. -->
+
+- “Confirm whether simulator noise reaches the same ingest function as
+  `POST /api/telemetry`; if not, route it through the real code path and show
+  accepted/rejected responses.” This converted an end-state test into a real
+  behavioral test.
+- “Implement localization exactly as the reviewed BFS/MST design; AI must not
+  alter boundaries.” This kept the graph walk deterministic and auditable.
+- “Treat an LLM only as a summarizer of an existing incident; always return a
+  deterministic fallback.” This produced a safe operational AI boundary.

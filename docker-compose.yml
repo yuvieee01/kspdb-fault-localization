@@ -3,11 +3,11 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: kspdb
-      POSTGRES_PASSWORD: kspdb_dev
-      POSTGRES_DB: kspdb
+      POSTGRES_USER: ${POSTGRES_USER:-kspdb}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-kspdb_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-kspdb}
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -21,10 +21,12 @@ services:
       context: ./backend
     restart: unless-stopped
     ports:
-      - "4000:4000"
+      - "${BACKEND_PORT:-4000}:4000"
     environment:
       PORT: "4000"
-      DATABASE_URL: "postgresql://kspdb:kspdb_dev@db:5432/kspdb?schema=public"
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-kspdb}:${POSTGRES_PASSWORD:-kspdb_dev}@db:5432/${POSTGRES_DB:-kspdb}?schema=public"
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-latest}
     depends_on:
       db:
         condition: service_healthy
@@ -34,7 +36,9 @@ services:
       context: ./frontend
     restart: unless-stopped
     ports:
-      - "5173:5173"
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
     depends_on:
       - backend
 

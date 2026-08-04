@@ -109,7 +109,31 @@ Reasoning: Computed lazily on the first query for a DT with missing line sequenc
 ---
 
 ## What's currently known-broken or fragile
-Pole count is ~2,283, slightly below the ~2,500-3,000 target range; accepted as close enough given time constraints.
+
+- The inferred topology is geometric. A Prim MST over coordinates cannot know
+  about physical obstructions, switches, or undocumented branches, so inferred
+  boundaries are deliberately confidence-limited rather than treated as survey
+  truth.
+- The in-process scheduler and simulator's active-fault map are single-process
+  state. A restart safely preserves persisted network/telemetry data, but it
+  does not preserve a pending simulator repair timer or scale localization to
+  multiple backend replicas.
+- Firmware 1.2 devices can go silent instead of emitting `power_lost`; their
+  status becomes stale only after the 17-minute heartbeat allowance. This is a
+  deliberate false-positive trade-off, not immediate outage evidence.
+- The local compose password is a development default only. A hosted database
+  must use the provider-generated `DATABASE_URL` and a host-managed secret.
 
 ## What would be done with two more weeks
-<!-- Fill in near the end. -->
+
+- Replace the mock schedule backing store with a resilient poller for the
+  utility outage feed, including source timestamps, retry/backoff, and an
+  operator view of feed freshness.
+- Add topology import and data-quality workflows so surveyed assets can replace
+  low-confidence MST edges, with review queues for implausible geometry.
+- Move interval coordination and simulator timers to durable background work so
+  multiple API instances can run safely, with metrics/alerts for ingest lag,
+  localization duration, and stale feed health.
+- Expand browser-level end-to-end coverage and load-test batched telemetry,
+  while preserving the deterministic algorithm fixtures as the correctness
+  oracle.

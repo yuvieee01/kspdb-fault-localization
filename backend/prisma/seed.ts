@@ -136,6 +136,16 @@ function offsetCoords(
 async function main() {
   console.log("[seed] Starting seed...");
 
+  // Container startup should provision an empty database, but must never
+  // erase incidents and telemetry when a persistent deployment restarts.
+  if (process.env.SEED_IF_EMPTY === "true") {
+    const existingPoleCount = await prisma.pole.count();
+    if (existingPoleCount > 0) {
+      console.log(`[seed] Network already present (${existingPoleCount} poles); skipping reset.`);
+      return;
+    }
+  }
+
   // Clean existing data (idempotent re-seed)
   console.log("[seed] Clearing existing data...");
   await prisma.incidentPole.deleteMany();

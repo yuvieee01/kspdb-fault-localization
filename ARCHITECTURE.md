@@ -1,86 +1,126 @@
 # Architecture
 
-## Diagram
-<!-- Mermaid or committed image. Pole device -> ingest -> localization ->
-ticket -> operator screen. Must match what's actually built - update this
-LAST, after the code is done, not first. -->
+## Data flow
+
+```mermaid
+flowchart LR
+  Device[Pole device] -->|telemetry| Ingest[POST /api/telemetry]
+  Simulator[Fault + noise simulator] -->|same ingest function| Ingest
+  Ingest --> Events[(telemetry_events\nappend-only)]
+  Ingest --> State[(pole_states\nderived latest state)]
+  Registry[(poles + transformers\nfeeders)] --> Topology[Recorded edges / lazy Prim MST]
+  State --> Localization[12-second deterministic\nlocalization walk]
+  Topology --> Localization
+  Outages[Mock scheduled-outage feed] --> Localization
+  Localization --> Tickets[(incidents + incident_poles)]
+  Tickets --> API[Dashboard API]
+  API --> UI[React operator console\n5-second polling]
+  Tickets --> Briefing[Optional Anthropic briefing]
+  Briefing --> UI
+```
 
 ## Data sourcing and ingestion
 
-Pole devices push telemetry to `POST /api/telemetry` (single event) or
-`POST /api/telemetry/batch` (array of events) over HTTPS. Both endpoints
-share the same ingest logic.
+Pole devices send one event to `POST /api/telemetry`, or batches to
+`POST /api/telemetry/batch`. Both routes use the same `ingestTelemetry`
+function used by the simulator. Payload fields and event names follow
+`docs/DATA_CONTRACTS.md` exactly.
 
-Every event is checked against three known sources of unreliable data
-before it's accepted:
-
-**Duplicates and stale/out-of-order messages.** Since delivery is
-at-least-once and retries can arrive up to 6 hours late, we don't trust
-arrival order or the device's own timestamp (`ts` can be off by up to
-90 seconds). Instead we track `last_seq` per pole in a `PoleState` table
-and only accept an event if its `seq` is strictly greater than the last
-one we've seen for that device. Anything at or below that value is
-silently discarded as a duplicate or a late retry of something we
-already processed.
-
-**Device reboots.** A device's `seq` counter resets to 0 every time it
-reboots, so a naive "seq must always increase" rule would incorrectly
-reject the first few messages after every restart. When a `boot` event
-arrives, we reset our tracked `last_seq` for that device, so its next
-sequence of numbers is judged on its own terms instead of against
-whatever it was doing before it rebooted.
-
-**Device swaps.** The same physical pole can end up with a different
-`device_id` over time (the department replaces faulty hardware without
-re-surveying the pole). We track `last_device_id` alongside `last_seq`,
-so if an incoming event's `device_id` doesn't match what we last saw for
-that pole, we treat it as a fresh device with its own sequence rather
-than comparing it against the previous device's counter.
-
-**Unknown poles.** Any event referencing a `pole_id` that isn't in the
-seeded pole registry is rejected at the door — the registry is treated
-as the closed set of real assets, so an unrecognized pole is either bad
-data or out-of-scope hardware, not something worth storing.
-
-Accepted events are written to an append-only `telemetry_events` log —
-we never delete or overwrite raw telemetry, only the derived
-`PoleState` gets updated in place. This means the full history is always
-available to recompute from if the derivation logic changes, and it
-keeps the ingest path itself simple: validate, dedup-check, write, done.
-
-The batch endpoint exists specifically for the burst scenario described
-in the brief (up to 5,000 messages in the seconds after a large outage):
-it validates and processes each event in the array independently,
-returning a per-event accept/reject result rather than failing the whole
-batch if one message is malformed.
+Ingest rejects an unknown `pole_id`. For a known pole it compares the incoming
+sequence number to `PoleState.last_seq` for the current `last_device_id`:
+duplicates and older sequences are rejected, `boot` resets the sequence stream,
+and a device swap begins a new stream. Accepted events are appended to
+`telemetry_events`; only `pole_states` is mutable derived state. Device `ts` is
+not used as the ordering key because it has permitted clock skew.
 
 ## Storage and internal model
-<!-- Schema (poles, transformers, telemetry_events, pole_state, incidents,
-etc). How network topology is represented - recorded vs inferred edges.
-Why this representation and not another. -->
 
-## The localization algorithm
-<!-- Explain well enough to reimplement. Cover: how the fault boundary is
-found, how symptoms are grouped into one incident, how simultaneous faults
-are handled, how confidence is computed, and explicitly what happens in the
-60%-missing-topology case vs the 40% recorded case. State complexity and
-known failure modes (e.g. MST inference wrong near geometric obstacles).
-Reference docs/ALGORITHM_SPEC.md as the detailed spec this section
-summarizes. -->
+PostgreSQL holds the asset registry (`substations`, `feeders`,
+`transformers`, `poles`), append-only telemetry, one live state row per pole,
+and incident/ticket tables. `topology_edges` separates `recorded` surveyed
+edges from `inferred` edges and stores per-edge confidence. `scheduled_outages`
+backs the mock `GET /scheduled-outages` feed. Prisma owns schema access and
+migrations.
 
-## Noise handling
-<!-- Dead sensor vs real outage. Scheduled outages + tolerance window.
-Debouncing. The false-positive story: what specifically prevents "one
-alert per dark pole." -->
+The seed is deterministic and creates 2 substations, 10 feeders, 81 DTs, and
+about 2,500 poles; approximately 9% have no device and approximately 60% of
+DTs omit recorded topology. Container startup seeds only an empty database so
+a persistent deployment does not erase telemetry on every restart.
+
+## Deterministic localization algorithm
+
+Localization runs every 12 seconds and can be invoked with
+`POST /api/localization/run`. It is deliberately ordinary code, never an LLM.
+
+For surveyed DTs, recorded parent/child rows form the radial tree. For the
+roughly 60% with no `seq_on_line`, the first query lazily builds and caches a
+Prim MST from transformer/pole coordinates using haversine distance. The
+chosen-parent distance is compared with the second-nearest candidate to create
+a bounded 0.3–0.95 inferred-edge confidence. This is a geometric inference,
+not a claim of surveyed topology; obstacles and dense layouts can lower its
+real-world reliability.
+
+On each run, effective status is read rather than stored: unseen is `unknown`,
+explicit de-energization is `dark`, and a live last state older than 17 minutes
+is `stale`. A BFS begins at the DT root. Every live-to-dark/stale transition
+becomes one boundary candidate and collects its contiguous dark/stale subtree.
+An isolated dark pole with live children is classified as device health instead
+of a power incident. Separate branches remain separate incidents. Root-dark
+patterns create DT incidents; matching patterns across every DT on a feeder
+create feeder incidents.
+
+Confidence is the minimum topology confidence on the root-to-boundary path,
+multiplied by sensor coverage and by corroboration (1.0 with `power_lost`, 0.6
+when inferred from silence). A `power_restored` event verifies an active ticket
+only after every affected pole is energized.
+
+## Noise and false-positive handling
+
+The simulator models at-least-once delivery, old timestamps, device reboot
+sequence reset, device swaps, missing devices, and firmware 1.2 devices that
+go silent without a final `power_lost`. Its duplicate, out-of-order, and late
+noise requests call the production ingest function and return the accept/reject
+responses; they do not construct database end states directly.
+
+Before persisting an incident, localization queries the shared scheduled-outage
+service for a matching DT or feeder. It makes an expected/suppressed record
+from `start - 10 minutes` through `end + 40 minutes`, so planned maintenance
+remains visible without creating an active dispatch ticket. If darkness remains
+after that tolerance, any matching suppressed record is promoted to `active`.
 
 ## API surface
-<!-- Table: method, path, purpose, request/response shape. Or generated
-OpenAPI (preferred over hand-maintained). -->
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/telemetry` | Ingest one validated telemetry event. |
+| POST | `/api/telemetry/batch` | Ingest a batch with per-event results. |
+| POST | `/api/localization/run` | Trigger deterministic localization. |
+| GET | `/api/network` | Map assets, effective status, topology, active/suppressed incidents. |
+| GET | `/api/incidents`, `/api/incidents/:id` | Ticket list and detail. |
+| POST | `/api/incidents/:id/resolve` | Resolve only if all affected poles are live. |
+| POST | `/api/incidents/:id/briefing` | Fetch/generate a cached AI or fallback briefing. |
+| GET | `/scheduled-outages` | Mock planned-outage feed; accepts `from` and `to` ISO query values. |
+| POST | `/api/simulator/fault`, `/repair`, `/noise` | Fault lifecycle and telemetry-noise simulation. |
+| POST | `/api/simulator/scheduled-outage` | Create planned outage plus matching dark telemetry. |
+| GET | `/api/simulator/status` | Active simulations. |
 
 ## UI reasoning
-<!-- What the operator sees first, and why. What was deliberately left off
-the main screen. Which UI decision is most likely to be wrong, and why. -->
 
-## The AI feature
-Chosen: Incident briefing summarization decoupled from localization logic.
-Reasoning: The localization algorithm must remain a 100% deterministic graph walk. The AI is solely used to synthesize complex fault metadata (affected assets, boundaries, confidence, topology source) into a human-readable operational briefing. A deterministic fallback summary guarantees the UI never crashes or blocks operators if the LLM API fails, times out, or lacks a configured key. Cost is minimized by only running generation on demand for localized incidents rather than raw telemetry streams.
+The dashboard makes spatial condition and ticket priority visible together:
+the Leaflet/OSM map colors poles by effective status, draws recorded/inferred
+topology differently, and highlights incident boundaries/subtrees. The ticket
+panel puts scope, confidence, affected count, PIN, evidence, and guarded manual
+resolution beside the map. A separate Simulator tab protects routine operators
+from test controls while keeping end-to-end verification available. Polling
+every five seconds is intentional: it is simple and robust through free-tier
+proxies, while staying comfortably within the localization latency target.
+
+## AI feature boundary
+
+`POST /api/incidents/:id/briefing` reads an already-localized ticket and sends
+only fixed ticket facts to Anthropic when `ANTHROPIC_API_KEY` is configured. The
+prompt explicitly forbids changing boundaries, scope, root cause, or affected
+assets. Provider timeouts/errors/no key return a deterministic template and
+store its source as `fallback`; the UI never needs an LLM error state. The AI
+does not participate in ingestion, topology inference, localization, or status
+transitions.
