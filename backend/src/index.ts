@@ -2,6 +2,8 @@ import express from "express";
 import cors from "cors";
 import telemetryRouter from "./routes/telemetry";
 import simulatorRouter from "./routes/simulator";
+import localizationRouter from "./routes/localization";
+import { runLocalization } from "./localization/engine";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -20,6 +22,14 @@ app.get("/api/hello", (_req, res) => {
 // Telemetry ingest
 app.use("/api/telemetry", telemetryRouter);
 app.use("/api/simulator", simulatorRouter);
+app.use("/api/localization", localizationRouter);
+
+const LOCALIZATION_INTERVAL_MS = 12_000;
+setInterval(() => {
+  void runLocalization().catch((error) =>
+    console.error("[localization] Scheduled run failed:", error)
+  );
+}, LOCALIZATION_INTERVAL_MS);
 
 app.listen(PORT, () => {
   console.log(`[backend] listening on port ${PORT}`);

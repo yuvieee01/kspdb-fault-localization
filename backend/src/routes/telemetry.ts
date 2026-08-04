@@ -18,6 +18,7 @@
 import { Router, Request, Response } from "express";
 import prisma from "../db";
 import { TelemetryEventType, PoleStatus } from "@prisma/client";
+import { verifyRestoredIncidentsForPole } from "../localization/engine";
 
 const router = Router();
 
@@ -230,6 +231,10 @@ async function processEvent(data: TelemetryPayload): Promise<ProcessResult> {
       last_seen_at: new Date(),
     },
   });
+
+  if (event === "power_restored") {
+    await verifyRestoredIncidentsForPole(pole_id);
+  }
 
   return { accepted: true };
 }

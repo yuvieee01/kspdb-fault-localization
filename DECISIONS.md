@@ -88,8 +88,8 @@ then seq=3 from device B on the same pole — the second event was
 correctly accepted rather than rejected as "stale."
 
 ## Missing topology (the 60% case)
-<!-- Fill in once implemented: MST-based geometric inference, confidence
-scoring, what the UI shows differently for inferred vs recorded topology. -->
+Chosen: Prim's Minimum Spanning Tree (MST) based on haversine distance to infer connections.
+Reasoning: Computed lazily on the first query for a DT with missing line sequences, caching the result to avoid recomputing on every request. Edge confidence is scored by comparing the chosen parent's distance against the second-closest candidate at insertion time, mathematically clamped between 0.3 and 0.95.
 
 ---
 
