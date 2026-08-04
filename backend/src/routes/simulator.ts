@@ -22,6 +22,7 @@
  *   - Clock skew up to +/- 90s
  */
 
+import { OutageScope } from "@prisma/client";
 import { Router, Request, Response } from "express";
 import prisma from "../db";
 import { ingestTelemetry, IngestHttpResponse, TelemetryPayload } from "./telemetry";
@@ -46,6 +47,12 @@ interface NoiseRequest {
   count?: number; // for duplicates: how many copies
 }
 
+interface ScheduledOutageSimulationRequest {
+  scope: "dt" | "feeder";
+  target_id: string;
+  duration_minutes?: number;
+}
+
 interface SimulatorIngestResponse {
   message: string;
   status: number;
@@ -59,10 +66,12 @@ interface ActiveFault {
   target_id: string;
   affected_poles: string[];
   created_at: Date;
+  scheduled_outage_id?: string;
 }
 
 const activeFaults: Map<string, ActiveFault> = new Map();
 let faultCounter = 0;
+let scheduledOutageCounter = 0;
 
 // Global seq counter per device for simulator-generated telemetry
 const deviceSeqCounters: Map<string, number> = new Map();
@@ -403,6 +412,94 @@ router.post("/fault", async (req: Request, res: Response): Promise<void> => {
 });
 
 /**
+ * POST /api/simulator/scheduled-outage
+ *
+ * Creates a mock feed record and darkens its DT/feeder during the actual
+ * scheduled window. Localization must retain the expected/suppressed record,
+ * rather than create a dispatchable fault ticket.
+ */
+router.post("/scheduled-outage", async (req: Request, res: Response): Promise<void> => {
+  const { scope, target_id, duration_minutes = 30 } = req.body as ScheduledOutageSimulationRequest;
+  if (!scope || !target_id) {
+    res.status(400).json({ error: "scope and target_id are required" });
+    return;
+  }
+  if (scope !== "dt" && scope !== "feeder") {
+    res.status(400).json({ error: "scope must be dt or feeder" });
+    return;
+  }
+  if (!Number.isFinite(duration_minutes) || duration_minutes < 1 || duration_minutes > 480) {
+    res.status(400).json({ error: "duration_minutes must be between 1 and 480" });
+    return;
+  }
+
+  try {
+    let affectedPoles: Array<{ pole_id: string; device_id: string | null; fw: string | null }>;
+    if (scope === "dt") {
+      const transformer = await prisma.transformer.findUnique({ where: { dt_id: target_id } });
+      if (!transformer) {
+        res.status(404).json({ error: `DT ${target_id} not found` });
+        return;
+      }
+      affectedPoles = await getAllPolesForDT(target_id);
+    } else {
+      const feeder = await prisma.feeder.findUnique({ where: { feeder_id: target_id } });
+      if (!feeder) {
+        res.status(404).json({ error: `feeder ${target_id} not found` });
+        return;
+      }
+      affectedPoles = await getAllPolesForFeeder(target_id);
+    }
+
+    const now = new Date();
+    scheduledOutageCounter++;
+    const outage = await prisma.scheduledOutage.create({
+      data: {
+        id: `SIM-SO-${now.getTime()}-${scheduledOutageCounter}`,
+        scope: scope === "dt" ? OutageScope.dt : OutageScope.feeder,
+        target_id,
+        start: now,
+        end: new Date(now.getTime() + duration_minutes * 60 * 1000),
+        reason: "Simulator: planned outage verification",
+      },
+    });
+    const stats = await simulatePowerLoss(affectedPoles);
+
+    faultCounter++;
+    const faultId = `SIM-${faultCounter.toString().padStart(4, "0")}`;
+    activeFaults.set(faultId, {
+      id: faultId,
+      type: scope,
+      target_id,
+      affected_poles: affectedPoles.map((pole) => pole.pole_id),
+      created_at: now,
+      scheduled_outage_id: outage.id,
+    });
+    res.status(201).json({
+      fault_id: faultId,
+      scheduled_outage: {
+        id: outage.id,
+        scope: outage.scope,
+        target_id: outage.target_id,
+        start: outage.start.toISOString(),
+        end: outage.end.toISOString(),
+      },
+      expected_ticket_status: "suppressed",
+      stats: {
+        total_affected: stats.totalAffected,
+        power_lost_sent: stats.powerLostSent,
+        silent_fw12x: stats.silentFw12x,
+        dying_msg_failed: stats.dyingMsgFailed,
+        no_device: stats.noDevice,
+      },
+    });
+  } catch (error) {
+    console.error("[simulator] Error simulating scheduled outage:", error);
+    res.status(500).json({ error: "internal server error" });
+  }
+});
+
+/**
  * POST /api/simulator/repair
  *
  * Repair a previously injected fault. Sends boot + power_restored for all
@@ -432,6 +529,10 @@ router.post("/repair", async (req: Request, res: Response): Promise<void> => {
     });
 
     const stats = await simulatePowerRestore(poles);
+
+    if (fault.scheduled_outage_id) {
+      await prisma.scheduledOutage.deleteMany({ where: { id: fault.scheduled_outage_id } });
+    }
 
     // Remove from active faults
     activeFaults.delete(fault_id);
@@ -700,6 +801,8 @@ router.get("/status", (_req: Request, res: Response): void => {
     target_id: f.target_id,
     affected_pole_count: f.affected_poles.length,
     created_at: f.created_at.toISOString(),
+    simulation_kind: f.scheduled_outage_id ? "scheduled_outage" : "fault",
+    scheduled_outage_id: f.scheduled_outage_id ?? null,
   }));
 
   res.json({ active_faults: faults });

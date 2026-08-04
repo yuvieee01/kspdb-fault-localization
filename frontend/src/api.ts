@@ -25,6 +25,8 @@ export const api = {
   simulatorStatus: () => request<{ active_faults: SimulatedFault[] }>("/api/simulator/status"),
   injectFault: (type: "span" | "dt" | "feeder", target_id: string) =>
     request("/api/simulator/fault", { method: "POST", body: JSON.stringify({ type, target_id }) }),
+  simulateScheduledOutage: (scope: "dt" | "feeder", target_id: string) =>
+    request("/api/simulator/scheduled-outage", { method: "POST", body: JSON.stringify({ scope, target_id }) }),
   repairFault: (fault_id: string) => request("/api/simulator/repair", { method: "POST", body: JSON.stringify({ fault_id }) }),
   injectNoise: (type: "duplicate" | "out_of_order" | "stale_late", target_pole_id: string) =>
     request("/api/simulator/noise", { method: "POST", body: JSON.stringify({ type, target_pole_id }) }),

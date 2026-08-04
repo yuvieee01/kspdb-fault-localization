@@ -73,4 +73,6 @@ export interface SimulatedFault {
   target_id: string;
   affected_pole_count: number;
   created_at: string;
+  simulation_kind: "fault" | "scheduled_outage";
+  scheduled_outage_id: string | null;
 }

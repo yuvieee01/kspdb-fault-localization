@@ -4,6 +4,7 @@ import telemetryRouter from "./routes/telemetry";
 import simulatorRouter from "./routes/simulator";
 import localizationRouter from "./routes/localization";
 import dashboardRouter from "./routes/dashboard";
+import scheduledOutagesRouter from "./routes/scheduled-outages";
 import { runLocalization } from "./localization/engine";
 
 const app = express();
@@ -25,6 +26,9 @@ app.use("/api/telemetry", telemetryRouter);
 app.use("/api/simulator", simulatorRouter);
 app.use("/api/localization", localizationRouter);
 app.use("/api", dashboardRouter);
+// Public mock-feed contract; /api is also exposed for dashboard convenience.
+app.use("/", scheduledOutagesRouter);
+app.use("/api", scheduledOutagesRouter);
 
 const LOCALIZATION_INTERVAL_MS = 12_000;
 setInterval(() => {

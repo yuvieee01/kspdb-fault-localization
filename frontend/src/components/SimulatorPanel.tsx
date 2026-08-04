@@ -10,6 +10,7 @@ interface Props {
 
 type FaultType = "span" | "dt" | "feeder";
 type NoiseType = "duplicate" | "out_of_order" | "stale_late";
+type OutageScope = "dt" | "feeder";
 
 export function SimulatorPanel({ network, faults, onChanged }: Props) {
   const [faultType, setFaultType] = useState<FaultType>("span");
@@ -20,6 +21,13 @@ export function SimulatorPanel({ network, faults, onChanged }: Props) {
     return [...new Set(network.transformers.map((item) => item.feeder_id))];
   }, [faultType, network]);
   const [faultTarget, setFaultTarget] = useState("");
+  const [outageScope, setOutageScope] = useState<OutageScope>("dt");
+  const outageTargets = useMemo(() => {
+    if (!network) return [];
+    if (outageScope === "dt") return network.transformers.map((item) => item.dt_id);
+    return [...new Set(network.transformers.map((item) => item.feeder_id))];
+  }, [outageScope, network]);
+  const [outageTarget, setOutageTarget] = useState("");
   const [noiseType, setNoiseType] = useState<NoiseType>("duplicate");
   const [noiseTarget, setNoiseTarget] = useState("");
   const [notice, setNotice] = useState("Ready. Simulator actions flow through the real ingest pipeline.");
@@ -28,6 +36,9 @@ export function SimulatorPanel({ network, faults, onChanged }: Props) {
   useEffect(() => {
     if (targets.length && !targets.includes(faultTarget)) setFaultTarget(targets[0]);
   }, [targets, faultTarget]);
+  useEffect(() => {
+    if (outageTargets.length && !outageTargets.includes(outageTarget)) setOutageTarget(outageTargets[0]);
+  }, [outageTargets, outageTarget]);
   useEffect(() => {
     if (!noiseTarget && network?.poles.length) setNoiseTarget(network.poles[0].pole_id);
   }, [network, noiseTarget]);
@@ -55,6 +66,11 @@ export function SimulatorPanel({ network, faults, onChanged }: Props) {
     void action(`${noiseType} noise`, () => api.injectNoise(noiseType, noiseTarget));
   }
 
+  function submitScheduledOutage(event: FormEvent) {
+    event.preventDefault();
+    void action("Scheduled outage", () => api.simulateScheduledOutage(outageScope, outageTarget));
+  }
+
   return (
     <section className="grid gap-5 xl:grid-cols-[1fr_1fr_1.1fr]">
       <ControlCard title="Inject a fault" subtitle="Power-loss telemetry is generated for the affected subtree.">
@@ -74,9 +90,17 @@ export function SimulatorPanel({ network, faults, onChanged }: Props) {
         </form>
       </ControlCard>
 
+      <ControlCard title="Simulate scheduled outage" subtitle="Adds a mock feed record, then de-energizes the planned scope. The ticket should be tagged expected.">
+        <form className="space-y-3" onSubmit={submitScheduledOutage}>
+          <label className="block text-xs font-medium text-slate-300">Scope<select value={outageScope} onChange={(event) => setOutageScope(event.target.value as OutageScope)} className="input mt-1"><option value="dt">DT</option><option value="feeder">Feeder</option></select></label>
+          <label className="block text-xs font-medium text-slate-300">Target<select value={outageTarget} onChange={(event) => setOutageTarget(event.target.value)} className="input mt-1">{outageTargets.map((target) => <option key={target}>{target}</option>)}</select></label>
+          <button disabled={busy || !outageTarget} className="button w-full bg-violet-500 hover:bg-violet-400">Simulate scheduled outage</button>
+        </form>
+      </ControlCard>
+
       <ControlCard title="Active simulations" subtitle="Repairs send boot and power-restored telemetry automatically.">
         <div className="space-y-2">
-          {faults.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-500">No active simulated faults.</p> : faults.map((fault) => <div key={fault.fault_id} className="rounded-lg bg-slate-800 p-3"><div className="flex justify-between gap-3"><div><p className="font-medium text-white">{fault.type} · {fault.target_id}</p><p className="text-xs text-slate-400">{fault.affected_pole_count} poles · {fault.fault_id}</p></div><button disabled={busy} onClick={() => void action(`Repair ${fault.fault_id}`, () => api.repairFault(fault.fault_id))} className="button bg-emerald-500 px-3 py-1 text-xs hover:bg-emerald-400">Repair</button></div></div>)}
+          {faults.length === 0 ? <p className="rounded-lg border border-dashed border-slate-700 p-4 text-sm text-slate-500">No active simulated faults.</p> : faults.map((fault) => <div key={fault.fault_id} className="rounded-lg bg-slate-800 p-3"><div className="flex justify-between gap-3"><div><p className="font-medium text-white">{fault.type} · {fault.target_id}</p><p className="text-xs text-slate-400">{fault.affected_pole_count} poles · {fault.fault_id}</p>{fault.simulation_kind === "scheduled_outage" && <p className="mt-1 text-xs font-semibold text-violet-300">Scheduled outage · expected / suppressed</p>}</div><button disabled={busy} onClick={() => void action(`Repair ${fault.fault_id}`, () => api.repairFault(fault.fault_id))} className="button bg-emerald-500 px-3 py-1 text-xs hover:bg-emerald-400">Repair</button></div></div>)}
         </div>
         <div className="mt-4 flex flex-wrap gap-2"><button disabled={busy} onClick={() => void action("Heartbeat baseline", api.heartbeatAll)} className="button bg-slate-700 text-xs hover:bg-slate-600">Send heartbeat baseline</button><button disabled={busy} onClick={() => void action("Localization run", api.runLocalization)} className="button bg-sky-500 text-xs hover:bg-sky-400">Run localization now</button></div>
       </ControlCard>

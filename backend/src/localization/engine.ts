@@ -1,6 +1,7 @@
-import { IncidentStatus, IncidentType, OutageScope } from "@prisma/client";
+import { IncidentStatus, IncidentType } from "@prisma/client";
 import prisma from "../db";
 import { computeInferredTopology } from "./topology";
+import { findMatchingScheduledOutage } from "../scheduled-outages/service";
 import {
   BoundaryWalkResult,
   DetectedIncident,
@@ -183,23 +184,11 @@ export function scoreConfidence(
   };
 }
 
-async function matchingOutage(dtId: string | null, feederId: string, now: Date) {
-  const outages = await prisma.scheduledOutage.findMany({
-    where: {
-      OR: [
-        ...(dtId ? [{ scope: OutageScope.dt, target_id: dtId }] : []),
-        { scope: OutageScope.feeder, target_id: feederId },
-      ],
-    },
-  });
-  return outages.find((outage) => {
-    const toleranceStart = new Date(outage.start.getTime() - 10 * 60 * 1000);
-    const toleranceEnd = new Date(outage.end.getTime() + 40 * 60 * 1000);
-    return now >= toleranceStart && now <= toleranceEnd;
-  });
-}
-
 async function persistIncident(incident: ScoredIncident, now: Date) {
+  const outage = await findMatchingScheduledOutage({
+    dtId: incident.dt_id,
+    feederId: incident.feeder_id,
+  }, now);
   const existing = await prisma.incident.findFirst({
     where: {
       feeder_id: incident.feeder_id,
@@ -209,9 +198,23 @@ async function persistIncident(incident: ScoredIncident, now: Date) {
       status: { in: [IncidentStatus.active, IncidentStatus.suppressed] },
     },
   });
-  if (existing) return existing;
+  if (existing) {
+    // A stale/cancelled feed must not hide an outage indefinitely. Reuse the
+    // localized incident, but promote it to a real dispatchable ticket once
+    // it is beyond end + 40 minutes and telemetry is still dark.
+    if (!outage && existing.status === IncidentStatus.suppressed) {
+      return prisma.incident.update({
+        where: { id: existing.id },
+        data: {
+          status: IncidentStatus.active,
+          suppression_outage_id: null,
+          confidence_reason: `${existing.confidence_reason.replace(/; expected \(scheduled outage [^)]+\)/, "")}; re-escalated after scheduled-outage tolerance`,
+        },
+      });
+    }
+    return existing;
+  }
 
-  const outage = await matchingOutage(incident.dt_id, incident.feeder_id, now);
   return prisma.incident.create({
     data: {
       type: incident.type === "span" ? IncidentType.span : incident.type === "dt" ? IncidentType.dt : IncidentType.feeder,
