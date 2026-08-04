@@ -29,6 +29,32 @@ way every run), and it means a reviewer re-running the system sees the
 same data I saw while building and documenting it, rather than a
 different random network each time.
 
+## Simulator and real ingest share one code path
+Chosen: telemetry.ts and simulator.ts both call the same underlying
+ingest function for validation, dedup, and state updates.
+Rejected: simulator noise endpoints writing directly to the database.
+Reasoning: a simulator that bypasses real ingest logic can only prove
+its own output looks plausible, not that the actual dedup/validation
+code a real device would hit is correct. Any test using the simulator
+is only meaningful if it exercises the same code path production
+telemetry does.
+
+## Simulator must not write derived state directly
+Chosen: the fault simulator only ever produces (or deliberately withholds)
+telemetry events. It never writes to PoleState directly.
+Rejected: an earlier version of the simulator set PoleState.energized =
+false directly for firmware-1.2.x poles during a fault, since those
+devices never send any telemetry when they lose power.
+Reasoning: doing this would let the localization algorithm "detect" an
+outage that it never actually inferred — the simulator would be handing
+it the answer for exactly the ambiguous case (silent device, no
+power_lost) the assignment is built around. Caught by checking
+telemetry_events after a fault injection and finding it empty for those
+poles despite PoleState already showing them dark. Fixed so PoleState
+for a silently-failed pole stays at its last known-good value until the
+localization algorithm's own debounce/inference logic (step 5) decides
+what to do with the silence.
+
 ## Telemetry deduplication: application-level, not a database constraint
 Chosen: dedup is handled in code, by tracking a `last_seq` value per pole
 in `PoleState` and discarding any incoming event where `seq <= last_seq`.

@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import telemetryRouter from "./routes/telemetry";
+import simulatorRouter from "./routes/simulator";
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -18,6 +19,7 @@ app.get("/api/hello", (_req, res) => {
 
 // Telemetry ingest
 app.use("/api/telemetry", telemetryRouter);
+app.use("/api/simulator", simulatorRouter);
 
 app.listen(PORT, () => {
   console.log(`[backend] listening on port ${PORT}`);

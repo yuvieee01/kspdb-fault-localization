@@ -61,6 +61,7 @@ model Pole {
   ward           String
   pincode        String?      // null for ~3% of poles
   device_id      String?      // null for ~9% of poles (no device fitted)
+  fw             String?      // firmware version, e.g. "1.4.2"; null if no device
 
   // Derived state
   pole_state       PoleState?

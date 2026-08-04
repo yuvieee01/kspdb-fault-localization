@@ -30,7 +30,7 @@ const VALID_EVENTS: Set<string> = new Set([
   "boot",
 ]);
 
-interface TelemetryPayload {
+export interface TelemetryPayload {
   device_id: string;
   pole_id: string;
   event: string;
@@ -118,6 +118,11 @@ function validatePayload(
 interface ProcessResult {
   accepted: boolean;
   reason?: string;
+}
+
+export interface IngestHttpResponse {
+  status: number;
+  body: { accepted: boolean; reason?: string; error?: string };
 }
 
 async function processEvent(data: TelemetryPayload): Promise<ProcessResult> {
@@ -229,6 +234,39 @@ async function processEvent(data: TelemetryPayload): Promise<ProcessResult> {
   return { accepted: true };
 }
 
+/**
+ * Shared single-event ingest entry point.
+ *
+ * The HTTP route and trusted in-process producers (the simulator) both use
+ * this function so validation, deduplication, event logging, and pole-state
+ * updates cannot diverge. Its return shape is exactly the POST /api/telemetry
+ * HTTP response.
+ */
+export async function ingestTelemetry(
+  body: unknown
+): Promise<IngestHttpResponse> {
+  const validation = validatePayload(body);
+  if (!validation.valid) {
+    return {
+      status: 400,
+      body: { accepted: false, error: validation.error },
+    };
+  }
+
+  try {
+    const result = await processEvent(validation.data);
+    return result.accepted
+      ? { status: 201, body: { accepted: true } }
+      : { status: 200, body: { accepted: false, reason: result.reason } };
+  } catch (err) {
+    console.error("[ingest] Error processing event:", err);
+    return {
+      status: 500,
+      body: { accepted: false, error: "internal server error" },
+    };
+  }
+}
+
 // ── Routes ──────────────────────────────────────────────────────────
 
 /**
@@ -238,25 +276,8 @@ async function processEvent(data: TelemetryPayload): Promise<ProcessResult> {
  * Response: { accepted: boolean, reason?: string }
  */
 router.post("/", async (req: Request, res: Response): Promise<void> => {
-  const validation = validatePayload(req.body);
-  if (!validation.valid) {
-    res.status(400).json({ accepted: false, error: validation.error });
-    return;
-  }
-
-  try {
-    const result = await processEvent(validation.data);
-    if (result.accepted) {
-      res.status(201).json({ accepted: true });
-    } else {
-      // Dedup rejection or unknown pole — not a server error, just a
-      // no-op. Return 200 (idempotent) with reason.
-      res.status(200).json({ accepted: false, reason: result.reason });
-    }
-  } catch (err) {
-    console.error("[ingest] Error processing event:", err);
-    res.status(500).json({ accepted: false, error: "internal server error" });
-  }
+  const result = await ingestTelemetry(req.body);
+  res.status(result.status).json(result.body);
 });
 
 /**

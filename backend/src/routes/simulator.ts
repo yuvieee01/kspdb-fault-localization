@@ -24,6 +24,7 @@
 
 import { Router, Request, Response } from "express";
 import prisma from "../db";
+import { ingestTelemetry, IngestHttpResponse, TelemetryPayload } from "./telemetry";
 
 const router = Router();
 
@@ -43,6 +44,12 @@ interface NoiseRequest {
   type: "dead_sensor" | "duplicate" | "out_of_order" | "stale_late";
   target_pole_id: string;
   count?: number; // for duplicates: how many copies
+}
+
+interface SimulatorIngestResponse {
+  message: string;
+  status: number;
+  body: IngestHttpResponse["body"];
 }
 
 // Track active simulated faults
@@ -85,63 +92,14 @@ function heartbeatJitter(): number {
 }
 
 /**
- * Send a telemetry event through the ingest pipeline (directly via Prisma,
- * bypassing HTTP to avoid circular dependency). We still call the same
- * core logic, but the simulator is a trusted internal caller.
+ * Send a telemetry event through the same validated ingest entry point used
+ * by POST /api/telemetry. The returned value is the exact HTTP response that
+ * endpoint would produce for this payload.
  */
-async function injectTelemetryEvent(event: {
-  device_id: string;
-  pole_id: string;
-  event: "heartbeat" | "power_lost" | "power_restored" | "boot";
-  energized: boolean;
-  ts: string;
-  seq: number;
-  battery_mv: number;
-  rssi: number;
-  fw: string;
-}): Promise<void> {
-  // Write directly to telemetry log (simulator events bypass dedup since
-  // we control the seq counter)
-  await prisma.telemetryEvent.create({
-    data: {
-      device_id: event.device_id,
-      pole_id: event.pole_id,
-      event: event.event,
-      energized: event.energized,
-      ts: new Date(event.ts),
-      seq: event.seq,
-      battery_mv: event.battery_mv,
-      rssi: event.rssi,
-      fw: event.fw,
-    },
-  });
-
-  // Update pole state
-  let status: "live" | "dark" | "offline_ambiguous" | "unknown" = "unknown";
-  switch (event.event) {
-    case "heartbeat":
-      status = event.energized ? "live" : "dark";
-      break;
-    case "power_lost":
-      status = "dark";
-      break;
-    case "power_restored":
-    case "boot":
-      status = "live";
-      break;
-  }
-
-  await prisma.poleState.update({
-    where: { pole_id: event.pole_id },
-    data: {
-      status,
-      energized: event.energized,
-      last_event: event.event,
-      last_seq: event.seq,
-      last_device_id: event.device_id,
-      last_seen_at: new Date(),
-    },
-  });
+async function injectTelemetryEvent(
+  event: TelemetryPayload
+): Promise<IngestHttpResponse> {
+  return ingestTelemetry(event);
 }
 
 /**
@@ -564,24 +522,14 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
           fw: pole.fw || "1.4.2",
         };
 
-        // First copy goes through the ingest pipeline normally
-        await injectTelemetryEvent(eventData);
-
-        // Additional copies are duplicates that the ingest handler should reject
-        // (but the simulator writes them directly to show the noise)
-        for (let i = 1; i < count; i++) {
-          await prisma.telemetryEvent.create({
-            data: {
-              device_id: eventData.device_id,
-              pole_id: eventData.pole_id,
-              event: eventData.event,
-              energized: eventData.energized,
-              ts: new Date(eventData.ts),
-              seq: eventData.seq, // same seq = duplicate
-              battery_mv: eventData.battery_mv,
-              rssi: eventData.rssi,
-              fw: eventData.fw,
-            },
+        const ingestResponses: SimulatorIngestResponse[] = [];
+        // Every delivery, including retries, is processed by real ingest logic.
+        for (let i = 0; i < count; i++) {
+          const result = await injectTelemetryEvent(eventData);
+          ingestResponses.push({
+            message: `copy ${i + 1}`,
+            status: result.status,
+            body: result.body,
           });
         }
 
@@ -590,6 +538,7 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
           pole_id: target_pole_id,
           copies: count,
           seq,
+          ingest_responses: ingestResponses,
           note: `Sent ${count} copies of the same heartbeat (seq=${seq}). Ingest handler should accept first, reject rest.`,
         });
         break;
@@ -602,7 +551,8 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
 
         // Event 1: ts = now
         const seq1 = getNextSeq(pole.device_id);
-        await injectTelemetryEvent({
+        const ingestResponses: SimulatorIngestResponse[] = [];
+        const firstResult = await injectTelemetryEvent({
           device_id: pole.device_id,
           pole_id: pole.pole_id,
           event: "heartbeat",
@@ -613,11 +563,16 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
           rssi: -85,
           fw: pole.fw || "1.4.2",
         });
+        ingestResponses.push({
+          message: "seq 1 (ts=now)",
+          status: firstResult.status,
+          body: firstResult.body,
+        });
 
         // Event 2: ts = 2 minutes BEFORE event 1 (out of order),
         // but seq is higher (correct ordering key)
         const seq2 = getNextSeq(pole.device_id);
-        await injectTelemetryEvent({
+        const secondResult = await injectTelemetryEvent({
           device_id: pole.device_id,
           pole_id: pole.pole_id,
           event: "heartbeat",
@@ -628,10 +583,16 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
           rssi: -85,
           fw: pole.fw || "1.4.2",
         });
+        ingestResponses.push({
+          message: "seq 2 (ts=now-2min)",
+          status: secondResult.status,
+          body: secondResult.body,
+        });
 
         res.status(201).json({
           type: "out_of_order",
           pole_id: target_pole_id,
+          ingest_responses: ingestResponses,
           note: `Sent 2 heartbeats: seq ${seq1} with ts=now, seq ${seq2} with ts=now-2min. System should use seq, not ts, for ordering.`,
         });
         break;
@@ -643,7 +604,7 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
         const staleTs = new Date(Date.now() - 4 * 3600 * 1000).toISOString(); // 4 hours ago
         const seq = getNextSeq(pole.device_id);
 
-        await injectTelemetryEvent({
+        const ingestResult = await injectTelemetryEvent({
           device_id: pole.device_id,
           pole_id: pole.pole_id,
           event: "power_lost",
@@ -658,6 +619,11 @@ router.post("/noise", async (req: Request, res: Response): Promise<void> => {
         res.status(201).json({
           type: "stale_late",
           pole_id: target_pole_id,
+          ingest_responses: [{
+            message: "stale power_lost (ts=now-4h)",
+            status: ingestResult.status,
+            body: ingestResult.body,
+          }],
           note: `Sent a power_lost with ts from 4 hours ago (stale retry). seq=${seq} is still fresh, so it should be accepted.`,
         });
         break;

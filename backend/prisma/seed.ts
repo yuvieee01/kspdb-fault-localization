@@ -327,15 +327,16 @@ async function main() {
         // Device assignment: ~9% have no device
         const hasDevice = !rng.chance(FRACTION_NO_DEVICE);
         let deviceId: string | null = null;
+        let fwVersion: string | null = null;
 
         if (hasDevice) {
           deviceId = `KSPDB-SD${padId(feeder.substationIdx + 1, 2)}-${dtId}-${padId(poleCounter, 4)}`;
           totalDevices++;
           if (rng.chance(FRACTION_FW_12X)) {
-            rng.pick(FW_VERSIONS_OLD);
+            fwVersion = rng.pick(FW_VERSIONS_OLD);
             devicesFw12x++;
           } else {
-            rng.pick(FW_VERSIONS_NEW);
+            fwVersion = rng.pick(FW_VERSIONS_NEW);
           }
         } else {
           polesNoDevice++;
@@ -355,6 +356,7 @@ async function main() {
           ward,
           pincode,
           device_id: deviceId,
+          fw: fwVersion,
         };
         dtPoles.push(pole);
         allPoleIds.push(poleId);
@@ -434,6 +436,7 @@ async function main() {
             ward: pole.ward,
             pincode: pole.pincode,
             device_id: pole.device_id,
+            fw: pole.fw,
           },
         });
       }
