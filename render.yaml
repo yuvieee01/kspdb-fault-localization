@@ -20,14 +20,15 @@ services:
   - type: web
     name: kspdb-fault-localization
     runtime: static
-    plan: free
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
     autoDeployTrigger: commit
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
     envVars:
-      # Set this once in the Render dashboard to the API's public HTTPS URL.
-      # Render Blueprints intentionally do not interpolate service URLs here.
       - key: VITE_API_BASE_URL
         sync: false
 
