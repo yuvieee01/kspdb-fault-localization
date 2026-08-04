@@ -22,7 +22,7 @@ network. Later restarts preserve a non-empty database.
 
 ## Public URL
 
-Deployment URL: **TBD — set after the human-owned Render/Railway deployment.**
+Deployment URL: [KSPDB-fault-localization](https://kspdb-fault-localization-0nzp.onrender.com/)
 
 ## Demo video
 
