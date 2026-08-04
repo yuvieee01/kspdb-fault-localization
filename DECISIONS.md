@@ -23,7 +23,7 @@ Reasoning: Avoids WebSocket complexity on simple deploy hosts while giving field
 
 ## AI Incident Briefing Feature
 Chosen: AI-generated summarization (via API) of already-localized incidents, paired with a strict deterministic template fallback.
-Reasoning: The system explicitly delegates the complex, deterministic logic (fault localization via graph walk) to code, avoiding LLM hallucinations for critical operational alerts[cite: 7, 11]. The AI is used purely as an enhancement to compile incident metadata (scope, boundary, confidence, topology source) into a quickly readable dispatch briefing[cite: 7, 10]. If the API key is missing or rate limits are hit, the system degrades gracefully to a pre-defined text template, ensuring the ticket workflow is never blocked by a third-party outage[cite: 7].
+Reasoning: The system explicitly delegates the complex, deterministic logic (fault localization via graph walk) to code, avoiding LLM hallucinations for critical operational alerts. The AI is used purely as an enhancement to compile incident metadata (scope, boundary, confidence, topology source) into a quickly readable dispatch briefing. If the API key is missing or rate limits are hit, the system degrades gracefully to a pre-defined text template, ensuring the ticket workflow is never blocked by a third-party outage.
 
 ## Seed data reproducibility
 Chosen: a deterministic seeded PRNG (xorshift32, seed=42) for generating
