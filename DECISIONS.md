@@ -22,8 +22,8 @@ Chosen: React + Leaflet with OpenStreetMap tiles, paired with a 5-second client 
 Reasoning: Avoids WebSocket complexity on simple deploy hosts while giving field operators immediate spatial awareness (color-coded pole statuses, topology links, and incident boundaries) alongside actionable ticket metadata and guarded resolution handling.
 
 ## Scheduled Outage Suppression & Tolerance Window
-Chosen: A shared tolerance evaluator that suppresses fault tickets from `start - 10m` to `end + 40m` of a scheduled outage, with dynamic re-escalation to an active fault if the poles remain dark after the window expires[cite: 9].
-Reasoning: Load shedding and planned maintenance are routine and must not trigger false positive tickets[cite: 8]. However, shutdowns start late, overrun, or are cancelled without the feed being updated[cite: 9]. Suppressing incidents perfectly to the scheduled times would mask real faults; applying the 40-minute tolerance and actively promoting stagnant suppressed incidents to active ensures true faults are caught even when the schedule is wrong[cite: 9].
+Chosen: A shared tolerance evaluator that suppresses fault tickets from `start - 10m` to `end + 40m` of a scheduled outage, with dynamic re-escalation to an active fault if the poles remain dark after the window expires.
+Reasoning: Load shedding and planned maintenance are routine and must not trigger false positive tickets. However, shutdowns start late, overrun, or are cancelled without the feed being updated. Suppressing incidents perfectly to the scheduled times would mask real faults; applying the 40-minute tolerance and actively promoting stagnant suppressed incidents to active ensures true faults are caught even when the schedule is wrong.
 
 ## The AI feature
 Chosen: Incident briefing summarization decoupled from localization logic.
