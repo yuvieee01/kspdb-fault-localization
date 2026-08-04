@@ -3,6 +3,7 @@ import cors from "cors";
 import telemetryRouter from "./routes/telemetry";
 import simulatorRouter from "./routes/simulator";
 import localizationRouter from "./routes/localization";
+import dashboardRouter from "./routes/dashboard";
 import { runLocalization } from "./localization/engine";
 
 const app = express();
@@ -23,6 +24,7 @@ app.get("/api/hello", (_req, res) => {
 app.use("/api/telemetry", telemetryRouter);
 app.use("/api/simulator", simulatorRouter);
 app.use("/api/localization", localizationRouter);
+app.use("/api", dashboardRouter);
 
 const LOCALIZATION_INTERVAL_MS = 12_000;
 setInterval(() => {

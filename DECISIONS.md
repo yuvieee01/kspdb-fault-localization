@@ -4,7 +4,6 @@ Newest first. One entry per meaningful decision or assumption: what was
 chosen, what was rejected, and why. Add entries the day the decision is
 made - do not reconstruct this from memory later.
 
-## Template entries to replace as real decisions get made:
 
 ## Stack
 Chosen: Node.js + TypeScript + Express, Prisma + PostgreSQL, React + Vite +
@@ -17,6 +16,10 @@ timeline.
 Chosen: polling (5-10s).
 Rejected: WebSockets - avoids proxy-related deployment risk on free-tier
 hosts, and the 120s p95 target has large margin at this event volume.
+
+## Operator Dashboard & Map Interface
+Chosen: React + Leaflet with OpenStreetMap tiles, paired with a 5-second client polling loop.
+Reasoning: Avoids WebSocket complexity on simple deploy hosts while giving field operators immediate spatial awareness (color-coded pole statuses, topology links, and incident boundaries) alongside actionable ticket metadata and guarded resolution handling.
 
 ## Seed data reproducibility
 Chosen: a deterministic seeded PRNG (xorshift32, seed=42) for generating
