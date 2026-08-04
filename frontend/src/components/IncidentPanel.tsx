@@ -128,7 +128,7 @@ export function IncidentPanel({ incidents, selectedId, onSelect, onChanged }: Pr
               disabled={briefingLoading}
               className="mt-3 rounded-md border border-sky-400/50 px-3 py-1.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-400/10 disabled:cursor-wait disabled:opacity-60"
             >
-              {briefingLoading ? "Preparing briefing…" : briefing ? "Refresh briefing" : "Generate briefing"}
+              {briefingLoading ? "Preparing briefing…" : briefing ? "Fetch saved briefing" : "Generate briefing"}
             </button>
           </div>
           <div className="mt-4">

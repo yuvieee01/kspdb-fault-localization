@@ -21,6 +21,10 @@ hosts, and the 120s p95 target has large margin at this event volume.
 Chosen: React + Leaflet with OpenStreetMap tiles, paired with a 5-second client polling loop.
 Reasoning: Avoids WebSocket complexity on simple deploy hosts while giving field operators immediate spatial awareness (color-coded pole statuses, topology links, and incident boundaries) alongside actionable ticket metadata and guarded resolution handling.
 
+## The AI feature
+Chosen: Incident briefing summarization decoupled from localization logic.
+Reasoning: The localization algorithm must remain a 100% deterministic graph walk. The AI is solely used to synthesize complex fault metadata (affected assets, boundaries, confidence, topology source) into a human-readable operational briefing. A deterministic fallback summary guarantees the UI never crashes or blocks operators if the LLM API fails, times out, or lacks a configured key. Cost is minimized by only running generation on demand for localized incidents rather than raw telemetry streams.
+
 ## AI Incident Briefing Feature
 Chosen: AI-generated summarization (via API) of already-localized incidents, paired with a strict deterministic template fallback.
 Reasoning: The system explicitly delegates the complex, deterministic logic (fault localization via graph walk) to code, avoiding LLM hallucinations for critical operational alerts. The AI is used purely as an enhancement to compile incident metadata (scope, boundary, confidence, topology source) into a quickly readable dispatch briefing. If the API key is missing or rate limits are hit, the system degrades gracefully to a pre-defined text template, ensuring the ticket workflow is never blocked by a third-party outage.

@@ -82,5 +82,5 @@ OpenAPI (preferred over hand-maintained). -->
 the main screen. Which UI decision is most likely to be wrong, and why. -->
 
 ## The AI feature
-<!-- What it is (incident briefing), why this spot and not elsewhere, cost
-per call, what happens when the model is unavailable or wrong. -->
+Chosen: Incident briefing summarization decoupled from localization logic.
+Reasoning: The localization algorithm must remain a 100% deterministic graph walk. The AI is solely used to synthesize complex fault metadata (affected assets, boundaries, confidence, topology source) into a human-readable operational briefing. A deterministic fallback summary guarantees the UI never crashes or blocks operators if the LLM API fails, times out, or lacks a configured key. Cost is minimized by only running generation on demand for localized incidents rather than raw telemetry streams.
