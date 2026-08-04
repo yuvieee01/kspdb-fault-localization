@@ -1,4 +1,4 @@
-import { Incident, IncidentDetail, NetworkData, SimulatedFault } from "./types";
+import { BriefingSource, Incident, IncidentDetail, NetworkData, SimulatedFault } from "./types";
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -20,6 +20,7 @@ export const api = {
   network: () => request<NetworkData>("/api/network"),
   incidents: () => request<{ incidents: Incident[] }>("/api/incidents"),
   incident: (id: number) => request<{ incident: IncidentDetail }>(`/api/incidents/${id}`),
+  briefing: (id: number) => request<{ briefing: string; source: BriefingSource; cached: boolean }>(`/api/incidents/${id}/briefing`, { method: "POST" }),
   resolve: (id: number) => request<{ incident: Incident }>(`/api/incidents/${id}/resolve`, { method: "POST" }),
   simulatorStatus: () => request<{ active_faults: SimulatedFault[] }>("/api/simulator/status"),
   injectFault: (type: "span" | "dt" | "feeder", target_id: string) =>

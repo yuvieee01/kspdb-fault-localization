@@ -1,6 +1,7 @@
-import { IncidentStatus } from "@prisma/client";
+import { BriefingSource, IncidentStatus } from "@prisma/client";
 import { Request, Response, Router } from "express";
 import prisma from "../db";
+import { generateBriefing, type BriefingContext } from "../briefing/service";
 import { getEffectiveStatus } from "../localization/engine";
 
 const router = Router();
@@ -17,6 +18,8 @@ function toIncidentSummary(incident: {
   confidence_reason: string;
   pin_code: string;
   affected_pole_count: number;
+  ai_briefing: string | null;
+  briefing_source: BriefingSource | null;
   suppression_outage_id: string | null;
   created_at: Date;
   updated_at: Date;
@@ -29,21 +32,33 @@ function toIncidentSummary(incident: {
   };
 }
 
-async function topologyConfidence(incident: {
+async function topologyFacts(incident: {
   dt_id: string | null;
   first_dark_pole_id: string | null;
-}): Promise<number> {
-  if (!incident.dt_id || !incident.first_dark_pole_id) return 1;
+}): Promise<{ confidence: number; source: BriefingContext["topologySource"] }> {
+  if (!incident.dt_id) return { confidence: 1, source: "root-level" };
   const edges = await prisma.topologyEdge.findMany({ where: { dt_id: incident.dt_id } });
+  if (!incident.first_dark_pole_id) {
+    const source = new Set(edges.map((edge) => edge.source));
+    return {
+      confidence: edges.length ? Math.min(...edges.map((edge) => edge.confidence)) : 1,
+      source: source.has("inferred") && source.has("recorded") ? "mixed" : source.has("inferred") ? "inferred" : "recorded",
+    };
+  }
   const parentByChild = new Map(edges.map((edge) => [edge.child_pole_id, edge]));
   const confidences: number[] = [];
+  const sources = new Set<string>();
   let current = incident.first_dark_pole_id;
   while (parentByChild.has(current)) {
     const edge = parentByChild.get(current)!;
     confidences.push(edge.confidence);
+    sources.add(edge.source);
     current = edge.parent_pole_id;
   }
-  return confidences.length ? Math.min(...confidences) : 1;
+  return {
+    confidence: confidences.length ? Math.min(...confidences) : 1,
+    source: sources.has("inferred") && sources.has("recorded") ? "mixed" : sources.has("inferred") ? "inferred" : "recorded",
+  };
 }
 
 /** Map payload, kept deliberately read-only for five-second client polling. */
@@ -118,10 +133,12 @@ router.get("/incidents/:id", async (req: Request, res: Response): Promise<void> 
       res.status(404).json({ error: "incident not found" });
       return;
     }
+    const topology = await topologyFacts(incident);
     res.json({
       incident: {
         ...toIncidentSummary(incident),
-        topology_confidence: await topologyConfidence(incident),
+        topology_confidence: topology.confidence,
+        topology_source: topology.source,
         affected_assets: incident.incident_poles.map((entry) => ({
           pole_id: entry.pole.pole_id,
           device_id: entry.pole.device_id,
@@ -133,6 +150,62 @@ router.get("/incidents/:id", async (req: Request, res: Response): Promise<void> 
   } catch (error) {
     console.error("[dashboard] Unable to load incident:", error);
     res.status(500).json({ error: "unable to load incident" });
+  }
+});
+
+/**
+ * Generates a presentation-only operational briefing from a fixed incident.
+ * This route does not invoke or modify deterministic localization in any way.
+ */
+router.post("/incidents/:id/briefing", async (req: Request, res: Response): Promise<void> => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "incident id must be an integer" });
+    return;
+  }
+  try {
+    const incident = await prisma.incident.findUnique({ where: { id } });
+    if (!incident) {
+      res.status(404).json({ error: "incident not found" });
+      return;
+    }
+    if (incident.ai_briefing) {
+      res.json({
+        briefing: incident.ai_briefing,
+        source: incident.briefing_source ?? BriefingSource.fallback,
+        cached: true,
+      });
+      return;
+    }
+
+    const topology = await topologyFacts(incident);
+    const scope = incident.type === "span" ? "Span" : incident.type === "dt" ? "DT" : "Feeder";
+    const generated = await generateBriefing({
+      scope,
+      boundaryPoleId: incident.boundary_pole_id,
+      affectedPoleCount: incident.affected_pole_count,
+      pinCode: incident.pin_code,
+      topologySource: topology.source,
+      confidence: incident.confidence,
+      corroboratedEvidence: incident.confidence_reason,
+      dtId: incident.dt_id,
+      feederId: incident.feeder_id,
+    });
+    const saved = await prisma.incident.update({
+      where: { id },
+      data: {
+        ai_briefing: generated.briefing,
+        briefing_source: generated.source === "ai" ? BriefingSource.ai : BriefingSource.fallback,
+      },
+    });
+    res.json({
+      briefing: saved.ai_briefing,
+      source: saved.briefing_source,
+      cached: false,
+    });
+  } catch (error) {
+    console.error("[briefing] Unable to generate incident briefing:", error);
+    res.status(500).json({ error: "unable to prepare incident briefing" });
   }
 });
 

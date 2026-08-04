@@ -162,6 +162,11 @@ enum IncidentStatus {
   suppressed   // scheduled outage match
 }
 
+enum BriefingSource {
+  ai
+  fallback
+}
+
 model Incident {
   id                 Int            @id @default(autoincrement())
   type               IncidentType
@@ -175,6 +180,7 @@ model Incident {
   pin_code           String         // 6-digit PIN for field crew
   affected_pole_count Int           @default(0)
   ai_briefing        String?        // cached LLM-generated briefing
+  briefing_source    BriefingSource? // identifies AI text vs deterministic fallback
   suppression_outage_id String?     // links to ScheduledOutage.id if suppressed
   created_at         DateTime       @default(now())
   updated_at         DateTime       @default(now()) @updatedAt

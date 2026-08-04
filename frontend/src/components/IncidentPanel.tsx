@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import { Incident, IncidentDetail } from "../types";
+import { BriefingSource, Incident, IncidentDetail } from "../types";
 
 const statusStyle: Record<Incident["status"], string> = {
   active: "bg-rose-500/15 text-rose-300 ring-rose-500/30",
@@ -23,14 +23,22 @@ interface Props {
 export function IncidentPanel({ incidents, selectedId, onSelect, onChanged }: Props) {
   const [detail, setDetail] = useState<IncidentDetail | null>(null);
   const [message, setMessage] = useState<string>("");
+  const [briefing, setBriefing] = useState<{ text: string; source: BriefingSource } | null>(null);
+  const [briefingLoading, setBriefingLoading] = useState(false);
   const selected = incidents.find((incident) => incident.id === selectedId) ?? null;
 
   useEffect(() => {
     if (!selectedId) {
       setDetail(null);
+      setBriefing(null);
       return;
     }
-    api.incident(selectedId).then(({ incident }) => setDetail(incident)).catch((error: Error) => setMessage(error.message));
+    api.incident(selectedId).then(({ incident }) => {
+      setDetail(incident);
+      setBriefing(incident.ai_briefing && incident.briefing_source
+        ? { text: incident.ai_briefing, source: incident.briefing_source }
+        : null);
+    }).catch((error: Error) => setMessage(error.message));
   }, [selectedId, incidents]);
 
   async function resolve() {
@@ -41,6 +49,24 @@ export function IncidentPanel({ incidents, selectedId, onSelect, onChanged }: Pr
       onChanged();
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Could not resolve ticket.");
+    }
+  }
+
+  async function generateBriefing() {
+    if (!detail) return;
+    setBriefingLoading(true);
+    try {
+      const result = await api.briefing(detail.id);
+      setBriefing({ text: result.briefing, source: result.source });
+    } catch {
+      // The backend returns a deterministic fallback for all provider errors.
+      // This only covers a transport failure between browser and backend.
+      setBriefing({
+        source: "fallback",
+        text: "Operational briefing is temporarily unavailable. Use the deterministic ticket details and crew PIN shown above.",
+      });
+    } finally {
+      setBriefingLoading(false);
     }
   }
 
@@ -88,6 +114,22 @@ export function IncidentPanel({ incidents, selectedId, onSelect, onChanged }: Pr
           <div className="mt-5 rounded-lg bg-slate-800 p-3 text-sm text-slate-300">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Root-cause evidence</p>
             <p className="mt-1">{detail.confidence_reason}</p>
+          </div>
+          <div className="mt-4 rounded-lg border border-slate-700 bg-slate-800/70 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-xs font-semibold uppercase tracking-wider text-slate-300">AI briefing</p>
+              {briefing && <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ring-1 ${briefing.source === "ai" ? "bg-violet-500/15 text-violet-200 ring-violet-400/30" : "bg-slate-700 text-slate-300 ring-slate-600"}`}>
+                {briefing.source === "ai" ? "AI-generated" : "Deterministic fallback"}
+              </span>}
+            </div>
+            {briefing ? <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">{briefing.text}</p> : <p className="mt-2 text-sm text-slate-400">Generate a dispatcher-ready summary of this fixed, deterministically localized ticket.</p>}
+            <button
+              onClick={generateBriefing}
+              disabled={briefingLoading}
+              className="mt-3 rounded-md border border-sky-400/50 px-3 py-1.5 text-xs font-semibold text-sky-200 transition hover:bg-sky-400/10 disabled:cursor-wait disabled:opacity-60"
+            >
+              {briefingLoading ? "Preparing briefing…" : briefing ? "Refresh briefing" : "Generate briefing"}
+            </button>
           </div>
           <div className="mt-4">
             <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Affected assets</p>

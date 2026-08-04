@@ -1,6 +1,7 @@
 export type EffectiveStatus = "live" | "dark" | "stale" | "unknown";
 export type IncidentStatus = "active" | "suppressed" | "verified" | "resolved";
 export type IncidentType = "span" | "dt" | "feeder";
+export type BriefingSource = "ai" | "fallback";
 
 export interface Pole {
   pole_id: string;
@@ -39,6 +40,8 @@ export interface Incident {
   confidence_reason: string;
   pin_code: string;
   affected_pole_count: number;
+  ai_briefing: string | null;
+  briefing_source: BriefingSource | null;
   suppression_outage_id: string | null;
   created_at: string;
   updated_at: string;
@@ -48,6 +51,7 @@ export interface Incident {
 
 export interface IncidentDetail extends Incident {
   topology_confidence: number;
+  topology_source: "recorded" | "inferred" | "mixed" | "root-level";
   affected_assets: Array<{
     pole_id: string;
     device_id: string | null;
