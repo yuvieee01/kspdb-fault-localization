@@ -2,6 +2,7 @@ import { BriefingSource, IncidentStatus } from "@prisma/client";
 import { Request, Response, Router } from "express";
 import prisma from "../db";
 import { generateBriefing, type BriefingContext } from "../briefing/service";
+import { findDeenergizedAffectedPoleIds } from "../incidents/resolution";
 import { getEffectiveStatus } from "../localization/engine";
 
 const router = Router();
@@ -224,13 +225,11 @@ router.post("/incidents/:id/resolve", async (req: Request, res: Response): Promi
       res.status(404).json({ error: "incident not found" });
       return;
     }
-    const darkPoles = incident.incident_poles.filter(
-      (entry) => entry.pole.pole_state?.energized !== true
-    );
-    if (darkPoles.length) {
-      res.status(409).json({
-        error: `Cannot resolve: ${darkPoles.length} affected pole${darkPoles.length === 1 ? "" : "s"} remain de-energized.`,
-        dark_pole_ids: darkPoles.map((entry) => entry.pole_id),
+    const darkPoleIds = findDeenergizedAffectedPoleIds(incident.incident_poles);
+    if (darkPoleIds.length) {
+      res.status(400).json({
+        error: `Cannot resolve: ${darkPoleIds.length} affected pole${darkPoleIds.length === 1 ? "" : "s"} remain de-energized.`,
+        dark_pole_ids: darkPoleIds,
       });
       return;
     }

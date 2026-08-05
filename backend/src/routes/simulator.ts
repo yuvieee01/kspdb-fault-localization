@@ -11,6 +11,7 @@
  *   POST /api/simulator/noise          — inject noise (dead sensor, duplicates, etc.)
  *   GET  /api/simulator/status         — list active simulated faults
  *   POST /api/simulator/heartbeat-all  — send heartbeat for all live poles
+ *   POST /api/simulator/reset          — restore a clean, live demo baseline
  *
  * Behavioral rules modeled (per DATA_CONTRACTS.md):
  *   - fw >= 1.3: sends power_lost ~70% of the time (capacitor reserve)
@@ -22,7 +23,7 @@
  *   - Clock skew up to +/- 90s
  */
 
-import { OutageScope } from "@prisma/client";
+import { OutageScope, PoleStatus } from "@prisma/client";
 import { Router, Request, Response } from "express";
 import prisma from "../db";
 import { ingestTelemetry, IngestHttpResponse, TelemetryPayload } from "./telemetry";
@@ -788,6 +789,49 @@ router.post(
     }
   }
 );
+
+/**
+ * POST /api/simulator/reset
+ *
+ * Restore the seeded network to a clean demonstration baseline without
+ * reseeding topology. Historical simulator tickets and events are removed,
+ * all PoleState heartbeats are made current, and in-process simulator state
+ * is cleared so the next injected event starts from a valid sequence.
+ */
+router.post("/reset", async (_req: Request, res: Response): Promise<void> => {
+  try {
+    const now = new Date();
+    await prisma.$transaction([
+      prisma.incidentPole.deleteMany(),
+      prisma.incident.deleteMany(),
+      prisma.telemetryEvent.deleteMany(),
+      prisma.scheduledOutage.deleteMany({ where: { id: { startsWith: "SIM-SO-" } } }),
+      prisma.poleState.updateMany({
+        data: {
+          energized: true,
+          status: PoleStatus.live,
+          last_seen_at: now,
+          last_event: null,
+          last_seq: 0,
+          last_device_id: null,
+        },
+      }),
+    ]);
+
+    activeFaults.clear();
+    deviceSeqCounters.clear();
+    faultCounter = 0;
+    scheduledOutageCounter = 0;
+
+    res.status(200).json({
+      message: "Demo baseline restored",
+      restored_at: now.toISOString(),
+    });
+  } catch (err) {
+    console.error("[simulator] Error restoring demo baseline:", err);
+    res.status(500).json({ error: "unable to restore demo baseline" });
+  }
+});
 
 /**
  * GET /api/simulator/status

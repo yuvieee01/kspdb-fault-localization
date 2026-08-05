@@ -33,5 +33,6 @@ export const api = {
   injectNoise: (type: "duplicate" | "out_of_order" | "stale_late", target_pole_id: string) =>
     request("/api/simulator/noise", { method: "POST", body: JSON.stringify({ type, target_pole_id }) }),
   heartbeatAll: () => request("/api/simulator/heartbeat-all", { method: "POST", body: "{}" }),
+  resetDemoState: () => request("/api/simulator/reset", { method: "POST", body: "{}" }),
   runLocalization: () => request("/api/localization/run", { method: "POST", body: "{}" }),
 };
